@@ -18,6 +18,7 @@ const Security = lazy(() => import("./pages/Security"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Reports = lazy(() => import("./pages/Reports"));
 const Profile = lazy(() => import("./pages/Profile"));
+const Messages = lazy(() => import("./pages/Messages"));
 
 // Marketplace Pages
 const Home = lazy(() => import("./pages/marketplace/Home"));
@@ -39,13 +40,13 @@ function LoadingFallback() {
   );
 }
 
-function AdminLayout({ children, onLogout }: { children: ReactNode; onLogout: () => void }) {
+function AdminLayout({ children, onLogout, isUser = false }: { children: ReactNode; onLogout: () => void; isUser?: boolean }) {
   return (
     <div className="flex min-h-screen bg-zinc-50">
       <Sidebar onLogout={onLogout} />
       <div className="flex-1 flex flex-col min-w-0">
         <Header />
-        <main className="p-8">
+        <main className={isUser ? "p-4 md:p-8" : "p-8"}>
           <Suspense fallback={<LoadingFallback />}>
             {children}
           </Suspense>
@@ -110,6 +111,7 @@ function AdminApp() {
         <Route path="products" element={<ProductManagement />} />
         <Route path="sellers" element={<RoleProtectedRoute allowedRoles={commonRoles}><SellerManagement /></RoleProtectedRoute>} />
         <Route path="orders" element={<Orders />} />
+        <Route path="messages" element={<Messages />} />
         <Route path="security" element={<Security />} />
         <Route path="reports" element={<RoleProtectedRoute allowedRoles={commonRoles}><Reports /></RoleProtectedRoute>} />
         <Route path="profile" element={<Profile />} />
@@ -122,6 +124,24 @@ function AdminApp() {
         <Route path="settings" element={<RoleProtectedRoute allowedRoles={superAdminOnly}><Settings /></RoleProtectedRoute>} />
         
         <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
+      </Routes>
+    </AdminLayout>
+  );
+}
+
+function UserApp() {
+  const navigate = useNavigate();
+  const handleLogout = () => {
+    localStorage.removeItem("admin_user");
+    navigate("/");
+  };
+
+  return (
+    <AdminLayout onLogout={handleLogout} isUser={true}>
+      <Routes>
+        <Route path="/" element={<UserDashboard />} />
+        <Route path="messages" element={<Messages />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AdminLayout>
   );
@@ -143,10 +163,12 @@ export default function App() {
           <Route path="cart" element={<Cart />} />
           <Route path="checkout" element={<Checkout />} />
           <Route path="seller/:id" element={<SellerProfile />} />
-          <Route path="dashboard" element={<UserDashboard />} />
           <Route path="login" element={<UserLogin />} />
           <Route path="become-seller" element={<BecomeSeller />} />
         </Route>
+
+        {/* User Dashboard Route */}
+        <Route path="/dashboard/*" element={<UserApp />} />
 
         {/* Admin Routes */}
         <Route path="/admin/*" element={<AdminApp />} />

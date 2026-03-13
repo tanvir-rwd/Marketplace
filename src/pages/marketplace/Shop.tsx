@@ -1,16 +1,23 @@
 import React, { useState, useEffect } from "react";
-import { useSearchParams, Link } from "react-router-dom";
-import { Search, Filter, Star, ShoppingCart, Eye, SlidersHorizontal, X } from "lucide-react";
+import { useSearchParams, Link, useNavigate } from "react-router-dom";
+import { Search, Filter, Star, ShoppingCart, Eye, SlidersHorizontal, X, Heart, MessageSquare } from "lucide-react";
 import toast from "react-hot-toast";
 import { addToCart } from "../../utils/cart";
 import { fetchApi } from "../../utils/api";
+import { isInWishlist, toggleWishlist } from "../../utils/wishlist";
+import ChatModal from "../../components/marketplace/ChatModal";
 
 export default function Shop() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [products, setProducts] = useState<any[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
+  const [wishlistItems, setWishlistItems] = useState<number[]>([]);
+  const [user, setUser] = useState<any>(null);
+  const [chatModalOpen, setChatModalOpen] = useState(false);
+  const [selectedProductForChat, setSelectedProductForChat] = useState<any>(null);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState(searchParams.get("search") || "");
@@ -20,6 +27,13 @@ export default function Shop() {
 
   useEffect(() => {
     fetchProducts();
+    setWishlistItems(JSON.parse(localStorage.getItem("marketplace_wishlist") || "[]").map((p: any) => p.id));
+    const userStr = localStorage.getItem("admin_user");
+    if (userStr) {
+      try {
+        setUser(JSON.parse(userStr));
+      } catch (e) {}
+    }
   }, []);
 
   useEffect(() => {
@@ -84,6 +98,32 @@ export default function Shop() {
   const handleAddToCart = (product: any) => {
     addToCart(product);
     toast.success(`${product.name} added to cart!`);
+  };
+
+  const handleToggleWishlist = (product: any) => {
+    const added = toggleWishlist(product);
+    if (added) {
+      setWishlistItems([...wishlistItems, product.id]);
+      toast.success("Added to wishlist!");
+    } else {
+      setWishlistItems(wishlistItems.filter(id => id !== product.id));
+      toast.success("Removed from wishlist");
+    }
+  };
+
+  const handleMessageSeller = (product: any) => {
+    if (!user) {
+      toast.error("Please login to message the seller");
+      navigate("/login");
+      return;
+    }
+    if (user.id === product.seller_id) {
+      toast.error("You cannot message yourself");
+      return;
+    }
+    
+    setSelectedProductForChat(product);
+    setChatModalOpen(true);
   };
 
   return (
@@ -223,6 +263,13 @@ export default function Shop() {
                         referrerPolicy="no-referrer"
                       />
                       <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button 
+                          onClick={() => handleToggleWishlist(product)}
+                          className={`p-2 rounded-full shadow-md transition-all ${wishlistItems.includes(product.id) ? 'bg-red-500 text-white' : 'bg-white text-zinc-700 hover:text-red-500'}`}
+                          title={wishlistItems.includes(product.id) ? "Remove from Wishlist" : "Add to Wishlist"}
+                        >
+                          <Heart size={18} fill={wishlistItems.includes(product.id) ? "currentColor" : "none"} />
+                        </button>
                         <Link 
                           to={`/product/${product.id}`}
                           className="p-2 bg-white text-zinc-700 rounded-full shadow-md hover:text-emerald-600 transition-colors"
@@ -230,6 +277,13 @@ export default function Shop() {
                         >
                           <Eye size={18} />
                         </Link>
+                        <button 
+                          onClick={() => handleMessageSeller(product)}
+                          className="p-2 bg-white text-zinc-700 rounded-full shadow-md hover:text-emerald-600 transition-colors"
+                          title="Message Seller"
+                        >
+                          <MessageSquare size={18} />
+                        </button>
                       </div>
                       {product.stock <= 5 && product.stock > 0 && (
                         <div className="absolute top-2 left-2 px-2 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-md">
@@ -247,9 +301,11 @@ export default function Shop() {
                         <Link to={`/product/${product.id}`} className="block">
                           <h3 className="font-bold text-zinc-900 hover:text-emerald-600 transition-colors line-clamp-1">{product.name}</h3>
                         </Link>
-                        <div className="flex items-center gap-1 text-amber-500 shrink-0">
-                          <Star size={14} fill="currentColor" />
-                          <span className="text-xs font-medium text-zinc-700">4.5</span>
+                        <div className="flex items-center gap-1.5 bg-zinc-50 px-2 py-1 rounded-lg border border-zinc-100 shrink-0">
+                          <Star size={12} fill={product.avg_rating > 0 ? "currentColor" : "none"} className={product.avg_rating > 0 ? "text-amber-500" : "text-zinc-300"} />
+                          <span className="text-[11px] font-black text-zinc-900">
+                            {product.avg_rating > 0 ? product.avg_rating.toFixed(1) : "NEW"}
+                          </span>
                         </div>
                       </div>
                       <p className="text-xs text-emerald-600 font-medium mb-2">{product.category}</p>
@@ -292,6 +348,18 @@ export default function Shop() {
           </div>
         </div>
       </div>
+      
+      {selectedProductForChat && (
+        <ChatModal 
+          isOpen={chatModalOpen} 
+          onClose={() => {
+            setChatModalOpen(false);
+            setTimeout(() => setSelectedProductForChat(null), 300);
+          }} 
+          product={selectedProductForChat} 
+          user={user} 
+        />
+      )}
     </div>
   );
 }

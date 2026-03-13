@@ -1,11 +1,9 @@
 export async function fetchApi(url: string, options: RequestInit = {}) {
   const adminUser = localStorage.getItem("admin_user");
-  const marketplaceUser = localStorage.getItem("marketplace_user");
   
   let user = null;
   try {
     if (adminUser) user = JSON.parse(adminUser);
-    else if (marketplaceUser) user = JSON.parse(marketplaceUser);
   } catch (e) {}
 
   const headers = new Headers(options.headers || {});

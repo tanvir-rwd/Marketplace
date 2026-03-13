@@ -1,13 +1,20 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { ArrowRight, Star, ShoppingCart, Eye } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowRight, Star, ShoppingCart, Eye, Heart, MessageSquare } from "lucide-react";
 import toast from "react-hot-toast";
 import { addToCart } from "../../utils/cart";
 import { fetchApi } from "../../utils/api";
+import { toggleWishlist } from "../../utils/wishlist";
+import ChatModal from "../../components/marketplace/ChatModal";
 
 export default function Home() {
+  const navigate = useNavigate();
   const [products, setProducts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [wishlistItems, setWishlistItems] = useState<number[]>([]);
+  const [user, setUser] = useState<any>(null);
+  const [chatModalOpen, setChatModalOpen] = useState(false);
+  const [selectedProductForChat, setSelectedProductForChat] = useState<any>(null);
   const [content, setContent] = useState<any>({
     bannerImage: "https://picsum.photos/seed/marketplace/1920/600",
     bannerTitle: "Welcome to Our Premium Marketplace",
@@ -16,6 +23,13 @@ export default function Home() {
 
   useEffect(() => {
     fetchProducts();
+    setWishlistItems(JSON.parse(localStorage.getItem("marketplace_wishlist") || "[]").map((p: any) => p.id));
+    const userStr = localStorage.getItem("admin_user");
+    if (userStr) {
+      try {
+        setUser(JSON.parse(userStr));
+      } catch (e) {}
+    }
     
     // Load content from backend settings
     const fetchContent = async () => {
@@ -50,6 +64,32 @@ export default function Home() {
   const handleAddToCart = (product: any) => {
     addToCart(product);
     toast.success(`${product.name} added to cart!`);
+  };
+
+  const handleToggleWishlist = (product: any) => {
+    const added = toggleWishlist(product);
+    if (added) {
+      setWishlistItems([...wishlistItems, product.id]);
+      toast.success("Added to wishlist!");
+    } else {
+      setWishlistItems(wishlistItems.filter(id => id !== product.id));
+      toast.success("Removed from wishlist");
+    }
+  };
+
+  const handleMessageSeller = (product: any) => {
+    if (!user) {
+      toast.error("Please login to message the seller");
+      navigate("/login");
+      return;
+    }
+    if (user.id === product.seller_id) {
+      toast.error("You cannot message yourself");
+      return;
+    }
+    
+    setSelectedProductForChat(product);
+    setChatModalOpen(true);
   };
 
   return (
@@ -120,6 +160,13 @@ export default function Home() {
                     referrerPolicy="no-referrer"
                   />
                   <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={() => handleToggleWishlist(product)}
+                      className={`p-2 rounded-full shadow-md transition-all ${wishlistItems.includes(product.id) ? 'bg-red-500 text-white' : 'bg-white text-zinc-700 hover:text-red-500'}`}
+                      title={wishlistItems.includes(product.id) ? "Remove from Wishlist" : "Add to Wishlist"}
+                    >
+                      <Heart size={18} fill={wishlistItems.includes(product.id) ? "currentColor" : "none"} />
+                    </button>
                     <Link 
                       to={`/product/${product.id}`}
                       className="p-2 bg-white text-zinc-700 rounded-full shadow-md hover:text-emerald-600 transition-colors"
@@ -127,6 +174,13 @@ export default function Home() {
                     >
                       <Eye size={18} />
                     </Link>
+                    <button 
+                      onClick={() => handleMessageSeller(product)}
+                      className="p-2 bg-white text-zinc-700 rounded-full shadow-md hover:text-emerald-600 transition-colors"
+                      title="Message Seller"
+                    >
+                      <MessageSquare size={18} />
+                    </button>
                   </div>
                   {product.stock <= 5 && product.stock > 0 && (
                     <div className="absolute top-2 left-2 px-2 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-md">
@@ -204,6 +258,18 @@ export default function Home() {
           </div>
         </div>
       </div>
+      
+      {selectedProductForChat && (
+        <ChatModal 
+          isOpen={chatModalOpen} 
+          onClose={() => {
+            setChatModalOpen(false);
+            setTimeout(() => setSelectedProductForChat(null), 300);
+          }} 
+          product={selectedProductForChat} 
+          user={user} 
+        />
+      )}
     </div>
   );
 }

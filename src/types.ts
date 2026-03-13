@@ -59,3 +59,28 @@ export interface PaymentMethod {
   instructions: string;
   is_enabled: number;
 }
+
+export interface Review {
+  id: number;
+  product_id: number;
+  user_id: number;
+  username: string;
+  rating: number;
+  comment: string;
+  image_url?: string;
+  created_at: string;
+}
+
+export interface Product {
+  id: number;
+  name: string;
+  description: string;
+  price: number;
+  stock: number;
+  category: string;
+  image_url: string;
+  seller_id: number;
+  status: string;
+  avg_rating?: number;
+  total_reviews?: number;
+}

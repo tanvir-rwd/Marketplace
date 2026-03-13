@@ -53,7 +53,7 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
           {/* Logo */}
-          <div className="flex-shrink-0 flex items-center">
+          <div className="flex-shrink-0 flex items-center mr-8">
             <Link to="/" className="text-2xl font-bold text-emerald-600 flex items-center gap-2">
               <ShoppingCart className="h-8 w-8" />
               <span>Marketplace</span>
@@ -61,7 +61,7 @@ export default function Navbar() {
           </div>
 
           {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center space-x-8">
+          <div className="hidden md:flex items-center space-x-8 flex-shrink-0">
             <Link to="/" className="text-zinc-600 hover:text-emerald-600 font-medium">Home</Link>
             <Link to="/shop" className="text-zinc-600 hover:text-emerald-600 font-medium">Shop</Link>
             

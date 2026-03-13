@@ -5,6 +5,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import bcrypt from "bcryptjs";
+import multer from "multer";
+
+const upload = multer({ dest: 'uploads/' });
 
 declare global {
   namespace Express {
@@ -133,10 +136,64 @@ db.exec(`
     FOREIGN KEY (target_user_id) REFERENCES users(id),
     FOREIGN KEY (admin_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER,
+    user_id INTEGER,
+    rating INTEGER CHECK (rating >= 1 AND rating <= 5),
+    comment TEXT,
+    image_url TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (product_id) REFERENCES products(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS product_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER,
+    user_id INTEGER,
+    seller_id INTEGER,
+    question TEXT,
+    answer TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    answered_at DATETIME,
+    FOREIGN KEY (product_id) REFERENCES products(id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (seller_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_id INTEGER,
+    receiver_id INTEGER,
+    product_id INTEGER,
+    content TEXT,
+    image_url TEXT,
+    is_read BOOLEAN DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sender_id) REFERENCES users(id),
+    FOREIGN KEY (receiver_id) REFERENCES users(id),
+    FOREIGN KEY (product_id) REFERENCES products(id)
+  );
 `);
 
 try {
+  db.prepare("SELECT image_url FROM messages LIMIT 1").get();
+} catch (e) {
+  db.prepare("ALTER TABLE messages ADD COLUMN image_url TEXT").run();
+}
+
+try {
+  db.exec("ALTER TABLE reviews ADD COLUMN image_url TEXT");
+  console.log("Added image_url column to reviews table");
+} catch (e) {
+  // Column might already exist
+}
+
+try {
   db.exec("ALTER TABLE orders ADD COLUMN user_id INTEGER REFERENCES users(id)");
+  console.log("Added user_id column to orders table");
 } catch (e) {
   // Column might already exist
 }
@@ -265,17 +322,43 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+  app.use('/uploads', express.static('uploads'));
+
+  app.post('/api/upload', upload.single('image'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    res.json({ url: `/uploads/${req.file.filename}` });
+  });
 
   // --- API Routes ---
 
   // Products
   app.get("/api/products", (req, res) => {
     try {
-      const products = db.prepare("SELECT * FROM products").all();
+      const products = db.prepare(`
+        SELECT p.*, 
+               COALESCE(AVG(r.rating), 0) as avg_rating, 
+               COUNT(r.id) as review_count
+        FROM products p
+        LEFT JOIN reviews r ON p.id = r.product_id
+        GROUP BY p.id
+      `).all();
       res.json(products);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch products" });
+    }
+  });
+
+  // Search Users
+  app.get("/api/users/search", (req, res) => {
+    const { q } = req.query;
+    if (!q) return res.json([]);
+    try {
+      const users = db.prepare("SELECT id, username, full_name, profile_image FROM users WHERE username LIKE ? OR full_name LIKE ? LIMIT 10").all(`%${q}%`, `%${q}%`);
+      res.json(users);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to search users" });
     }
   });
 
@@ -357,6 +440,236 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete product" });
+    }
+  });
+
+  // Product Questions
+  app.get("/api/products/:id/questions", (req, res) => {
+    try {
+      const questions = db.prepare(`
+        SELECT q.*, u.full_name as user_name, u.profile_image as user_image, s.full_name as seller_name
+        FROM product_questions q
+        JOIN users u ON q.user_id = u.id
+        JOIN users s ON q.seller_id = s.id
+        WHERE q.product_id = ?
+        ORDER BY q.created_at DESC
+      `).all(req.params.id);
+      res.json(questions);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch questions" });
+    }
+  });
+
+  app.post("/api/products/:id/questions", (req, res) => {
+    const { user_id, seller_id, question } = req.body;
+    if (!user_id || !seller_id || !question) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    try {
+      const result = db.prepare("INSERT INTO product_questions (product_id, user_id, seller_id, question) VALUES (?, ?, ?, ?)").run(req.params.id, user_id, seller_id, question);
+      const newQuestion = db.prepare(`
+        SELECT q.*, u.full_name as user_name, u.profile_image as user_image, s.full_name as seller_name
+        FROM product_questions q
+        JOIN users u ON q.user_id = u.id
+        JOIN users s ON q.seller_id = s.id
+        WHERE q.id = ?
+      `).get(result.lastInsertRowid);
+      res.json(newQuestion);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to submit question" });
+    }
+  });
+
+  app.put("/api/questions/:id/answer", (req, res) => {
+    const { answer } = req.body;
+    if (!answer) {
+      return res.status(400).json({ error: "Answer is required" });
+    }
+    try {
+      db.prepare("UPDATE product_questions SET answer = ?, answered_at = CURRENT_TIMESTAMP WHERE id = ?").run(answer, req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to submit answer" });
+    }
+  });
+
+  app.get("/api/seller/:id/questions", (req, res) => {
+    try {
+      const questions = db.prepare(`
+        SELECT q.*, p.name as product_name, p.image_url as product_image, u.full_name as user_name, u.profile_image as user_image
+        FROM product_questions q
+        JOIN products p ON q.product_id = p.id
+        JOIN users u ON q.user_id = u.id
+        WHERE q.seller_id = ?
+        ORDER BY q.created_at DESC
+      `).all(req.params.id);
+      res.json(questions);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch seller questions" });
+    }
+  });
+
+  // Messages
+  app.get("/api/conversations/:userId", (req, res) => {
+    try {
+      const userId = req.params.userId;
+      // Get latest message for each conversation
+      const conversations = db.prepare(`
+        SELECT 
+          m.*,
+          CASE 
+            WHEN m.sender_id = ? THEN receiver.id 
+            ELSE sender.id 
+          END as other_user_id,
+          CASE 
+            WHEN m.sender_id = ? THEN receiver.full_name 
+            ELSE sender.full_name 
+          END as other_user_name,
+          CASE 
+            WHEN m.sender_id = ? THEN receiver.profile_image 
+            ELSE sender.profile_image 
+          END as other_user_image,
+          CASE 
+            WHEN m.sender_id = ? THEN receiver.role 
+            ELSE sender.role 
+          END as other_user_role
+        FROM messages m
+        JOIN users sender ON m.sender_id = sender.id
+        JOIN users receiver ON m.receiver_id = receiver.id
+        INNER JOIN (
+            SELECT 
+                CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END as contact_id,
+                MAX(created_at) as max_created_at
+            FROM messages
+            WHERE sender_id = ? OR receiver_id = ?
+            GROUP BY contact_id
+        ) latest ON 
+            (CASE WHEN m.sender_id = ? THEN m.receiver_id ELSE m.sender_id END) = latest.contact_id 
+            AND m.created_at = latest.max_created_at
+        WHERE m.sender_id = ? OR m.receiver_id = ?
+        ORDER BY m.created_at DESC
+      `).all(userId, userId, userId, userId, userId, userId, userId, userId, userId, userId);
+      res.json(conversations);
+    } catch (error) {
+      console.error("Failed to fetch conversations:", error);
+      res.status(500).json({ error: "Failed to fetch conversations" });
+    }
+  });
+
+  app.get("/api/messages/:userId/:otherUserId", (req, res) => {
+    try {
+      const { userId, otherUserId } = req.params;
+      
+      // Mark messages as read
+      db.prepare(`
+        UPDATE messages 
+        SET is_read = 1 
+        WHERE receiver_id = ? AND sender_id = ?
+      `).run(userId, otherUserId);
+
+      const messages = db.prepare(`
+        SELECT m.*, p.name as product_name, p.image_url as product_image
+        FROM messages m
+        LEFT JOIN products p ON m.product_id = p.id
+        WHERE (m.sender_id = ? AND m.receiver_id = ?)
+           OR (m.sender_id = ? AND m.receiver_id = ?)
+        ORDER BY m.created_at ASC
+      `).all(userId, otherUserId, otherUserId, userId);
+      res.json(messages);
+    } catch (error) {
+      console.error("Failed to fetch messages:", error);
+      res.status(500).json({ error: "Failed to fetch messages" });
+    }
+  });
+
+  app.post("/api/messages", (req, res) => {
+    const { sender_id, receiver_id, product_id, content, image_url } = req.body;
+    if (!sender_id || !receiver_id || (!content && !image_url)) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    try {
+      const result = db.prepare(`
+        INSERT INTO messages (sender_id, receiver_id, product_id, content, image_url) 
+        VALUES (?, ?, ?, ?, ?)
+      `).run(sender_id, receiver_id, product_id || null, content || null, image_url || null);
+      
+      const newMessage = db.prepare(`
+        SELECT m.*, p.name as product_name, p.image_url as product_image
+        FROM messages m
+        LEFT JOIN products p ON m.product_id = p.id
+        WHERE m.id = ?
+      `).get(result.lastInsertRowid);
+      
+      res.json(newMessage);
+    } catch (error) {
+      console.error("Failed to send message:", error);
+      res.status(500).json({ error: "Failed to send message" });
+    }
+  });
+
+  // Reviews
+  app.get("/api/products/:id/reviews", (req, res) => {
+    try {
+      const reviews = db.prepare(`
+        SELECT reviews.*, users.username 
+        FROM reviews 
+        JOIN users ON reviews.user_id = users.id 
+        WHERE reviews.product_id = ? 
+        ORDER BY reviews.created_at DESC
+      `).all(req.params.id);
+      res.json(reviews);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch reviews" });
+    }
+  });
+
+  app.post("/api/products/:id/reviews", authenticate, (req, res) => {
+    try {
+      const { rating, comment, image_url } = req.body;
+      const productId = Number(req.params.id);
+      const userId = req.user.id;
+
+      if (isNaN(productId)) {
+        return res.status(400).json({ error: "Invalid product ID" });
+      }
+
+      // Check if user has already reviewed this product
+      const existingReview = db.prepare("SELECT id FROM reviews WHERE product_id = ? AND user_id = ?").get(productId, userId);
+      if (existingReview) {
+        return res.status(400).json({ error: "You have already reviewed this product" });
+      }
+
+      // Optional: Check if user has actually bought the product
+      // For demo purposes, we'll just log if they haven't bought it instead of blocking
+      const hasBought = db.prepare("SELECT id FROM orders WHERE product_id = ? AND user_id = ?").get(productId, userId);
+      if (!hasBought) {
+        console.log(`User ${userId} attempting to review product ${productId} without an order record.`);
+        // return res.status(403).json({ error: "You can only review products you have purchased and received" });
+      }
+
+      console.log("Submitting review:", { 
+        productId, 
+        userId, 
+        rating, 
+        commentLength: comment?.length, 
+        hasImage: !!image_url,
+        imagePrefix: image_url ? image_url.substring(0, 50) : null 
+      });
+
+      const result = db.prepare("INSERT INTO reviews (product_id, user_id, rating, comment, image_url) VALUES (?, ?, ?, ?, ?)")
+        .run(productId, userId, rating, comment, image_url);
+      
+      const newReview = db.prepare(`
+        SELECT reviews.*, users.username 
+        FROM reviews 
+        JOIN users ON reviews.user_id = users.id 
+        WHERE reviews.id = ?
+      `).get(result.lastInsertRowid);
+
+      res.json(newReview);
+    } catch (error) {
+      console.error("Review submission error:", error);
+      res.status(500).json({ error: "Failed to submit review: " + (error instanceof Error ? error.message : String(error)) });
     }
   });
 

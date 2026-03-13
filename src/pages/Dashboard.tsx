@@ -1,18 +1,34 @@
 import { useState, useEffect } from "react";
-import { Users, ShieldCheck, ShoppingCart, Globe, ArrowUpRight, ArrowDownRight, Package, CheckCircle, Clock, ShieldAlert, Activity, ChevronRight } from "lucide-react";
+import { Users, ShieldCheck, ShoppingCart, Globe, ArrowUpRight, ArrowDownRight, Package, CheckCircle, Clock, ShieldAlert, Activity, ChevronRight, MessageCircle } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { VISITOR_DATA } from "../constants";
 import { fetchApi } from "../utils/api";
 import { Link } from "react-router-dom";
+import toast from "react-hot-toast";
 
 export default function Dashboard() {
   const [stats, setStats] = useState<any>(null);
   const [pendingActions, setPendingActions] = useState<any[]>([]);
+  const [sellerQuestions, setSellerQuestions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [replyingTo, setReplyingTo] = useState<number | null>(null);
+  const [replyText, setReplyText] = useState("");
   
   const user = JSON.parse(localStorage.getItem("admin_user") || "{}");
   const isSeller = user.role === "seller";
   const isAdmin = user.role === "admin" || user.role === "super_admin";
+
+  const fetchQuestions = async () => {
+    try {
+      const questionsRes = await fetchApi(`/api/seller/${user.id}/questions`);
+      if (questionsRes.ok) {
+        const questionsData = await questionsRes.json();
+        setSellerQuestions(questionsData.slice(0, 5));
+      }
+    } catch (error) {
+      console.error("Failed to fetch questions", error);
+    }
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -29,6 +45,10 @@ export default function Dashboard() {
             setPendingActions(actionsData.slice(0, 5)); // Get top 5
           }
         }
+
+        if (isSeller) {
+          await fetchQuestions();
+        }
       } catch (error) {
         console.error("Failed to fetch dashboard data", error);
       } finally {
@@ -37,6 +57,28 @@ export default function Dashboard() {
     };
     fetchData();
   }, [isSeller, isAdmin, user.id]);
+
+  const handleReplyQuestion = async (questionId: number) => {
+    if (!replyText.trim()) return;
+
+    try {
+      const res = await fetchApi(`/api/questions/${questionId}/answer`, {
+        method: "PUT",
+        body: JSON.stringify({ answer: replyText })
+      });
+
+      if (res.ok) {
+        toast.success("Reply submitted successfully!");
+        setReplyText("");
+        setReplyingTo(null);
+        fetchQuestions();
+      } else {
+        toast.error("Failed to submit reply");
+      }
+    } catch (error) {
+      toast.error("An error occurred");
+    }
+  };
 
   if (isLoading) {
     return (
@@ -241,6 +283,107 @@ export default function Dashboard() {
                   </Link>
                 </div>
               )}
+            </div>
+          )}
+
+          {isSeller && (
+            <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden flex flex-col h-full max-h-[800px]">
+              <div className="p-6 border-b border-zinc-100 bg-zinc-50/50">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-bold text-zinc-900">Recent Questions</h3>
+                    <p className="text-sm text-zinc-500 mt-1">Customer inquiries on your products</p>
+                  </div>
+                  <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center relative">
+                    <MessageCircle size={20} />
+                    {sellerQuestions.some(q => !q.answer) && (
+                      <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 border-2 border-white rounded-full"></span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-4 flex-1 overflow-y-auto">
+                {sellerQuestions.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <MessageCircle size={32} />
+                    </div>
+                    <p className="text-zinc-900 font-bold">No questions yet</p>
+                    <p className="text-sm text-zinc-500 mt-1">When customers ask about your products, they'll appear here.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {sellerQuestions.map(question => (
+                      <div key={question.id} className="p-4 rounded-2xl border border-zinc-100 bg-white hover:border-zinc-300 transition-colors group">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${
+                            question.answer ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-amber-50 text-amber-600 border border-amber-100'
+                          }`}>
+                            {question.answer ? 'Answered' : 'Needs Reply'}
+                          </span>
+                          <span className="text-xs font-medium text-zinc-400">
+                            {new Date(question.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <p className="text-sm font-bold text-zinc-900 line-clamp-2 mb-1">{question.question}</p>
+                        <p className="text-xs text-zinc-500 mb-3 line-clamp-1">Product: {question.product_name}</p>
+                        
+                        {replyingTo === question.id ? (
+                          <div className="mt-3 mb-3 space-y-2">
+                            <textarea
+                              value={replyText}
+                              onChange={(e) => setReplyText(e.target.value)}
+                              placeholder="Type your answer..."
+                              className="w-full px-3 py-2 border border-zinc-200 rounded-xl focus:outline-none focus:border-emerald-500 text-sm resize-none"
+                              rows={2}
+                            />
+                            <div className="flex gap-2 justify-end">
+                              <button 
+                                onClick={() => setReplyingTo(null)}
+                                className="px-3 py-1.5 text-xs font-bold text-zinc-500 hover:text-zinc-700"
+                              >
+                                Cancel
+                              </button>
+                              <button 
+                                onClick={() => handleReplyQuestion(question.id)}
+                                className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700"
+                              >
+                                Submit
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="flex items-center justify-between mt-auto pt-3 border-t border-zinc-50">
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-6 rounded-full bg-zinc-100 flex items-center justify-center text-[10px] font-bold text-zinc-600 overflow-hidden">
+                              {question.user_image ? (
+                                <img src={question.user_image} alt={question.user_name} className="w-full h-full object-cover" />
+                              ) : (
+                                question.user_name?.charAt(0) || 'U'
+                              )}
+                            </div>
+                            <span className="text-xs font-medium text-zinc-500">{question.user_name}</span>
+                          </div>
+                          {question.answer ? (
+                            <Link to={`/product/${question.product_id}`} className="text-xs font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              View <ChevronRight size={14} />
+                            </Link>
+                          ) : (
+                            <button 
+                              onClick={() => { setReplyingTo(question.id); setReplyText(""); }}
+                              className="text-xs font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              Reply <ChevronRight size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
